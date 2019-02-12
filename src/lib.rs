@@ -7,17 +7,25 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(args: &[String]) -> Result<Config, &'static str> {
-        if args.len() < 3 {
-            return Err("not enough arguments");
-        }
+    pub fn new<T>(mut args: T) -> Result<Config, &'static str> 
+        where T: Iterator<Item = String>
+    {
+        //First arg is program name
+        args.next();
 
-        let pattern = args[1].clone();
-        let filename = args[2].clone();
+        //Unpack args
+        let pattern = match args.next() {
+            Some(arg) => arg,
+            None => return Err("not enough arguments specified")
+        };
+        let filename = match args.next() {
+            Some(arg) => arg,
+            None => return Err("not enough arguments specified")
+        };
 
         //Search is case-insensitive iff CASE_INSENSITIVE=1
         let case_sensitive = match env::var("CASE_INSENSITIVE") {
-            Ok(val) => if val.parse().unwrap_or_else(|err| {0}) == 1 {
+            Ok(val) => if val.parse().unwrap_or(0) == 1 {
                 false
             } else {
                 true
@@ -45,33 +53,51 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
 }
 
 pub fn search<'a>(pattern: &str, contents: &'a str) -> Vec<&'a str> {
-    let mut results = Vec::new();
-
-    for line in contents.lines() {
-        if line.contains(pattern) {
-            results.push(line);
-        }
-    }
-
-    results
+    contents.lines()
+        .filter(|line| {line.contains(&pattern)})
+        .collect()
 }
 
 pub fn search_case_insensitive<'a>(pattern: &str, contents: &'a str) -> Vec<&'a str> {
-    let mut results = Vec::new();
     let pattern = pattern.to_lowercase();
 
-    for line in contents.lines() {
-        if line.to_lowercase().contains(&pattern) {
-            results.push(line);
-        }
-    }
-
-    results
+    contents.lines()
+        .filter(|line| {line.to_lowercase().contains(&pattern)})
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    //Struct for simulating command line arguments to Config
+    struct TestArgs {
+        data: Vec<String>,
+        index: usize
+    }
+
+    impl TestArgs {
+        pub fn new(pattern: &str, filename: &str) -> TestArgs {
+            let mut data = vec![String::new()];
+            data.push(String::from(pattern));
+            data.push(String::from(filename));
+
+            TestArgs{data, index: 0}
+        }
+    }
+
+    impl Iterator for TestArgs {
+        type Item = String;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.index < self.data.len() {
+                self.index += 1;
+                Some(self.data[self.index - 1].to_string())
+            } else {
+                None
+            }
+        }
+    } 
 
     #[test]
     fn new_config() {
@@ -85,13 +111,21 @@ mod tests {
     #[should_panic(expected = "not enough arguments")]
     #[allow(unused_variables)]
     fn new_config_failure() {
-        let mut args = prepare_args("pattern", "filename");
-        //Remove an argument so Config constructor fails
-        args.pop();
+        //Remove the first argument
+        let args = TestArgs::new("pattern", "filename").filter(|s| *s != String::new());
 
-        let config = Config::new(&args).unwrap_or_else(|err| {
+        let config = Config::new(args).unwrap_or_else(|err| {
             panic!("could not construct Config: {}", err);
         });
+    }
+
+    #[test]
+    fn run_success() {
+        let config = prepare_config(" ", "test.txt");
+
+        if let Err(e) = run(config) {
+            panic!("run failed: {}", e);
+        }
     }
 
     #[test]
@@ -133,13 +167,9 @@ Trust me.";
         );
     }
 
-    fn prepare_args(pattern: &str, filename: &str) -> Vec<String> {
-        vec![String::new(), String::from(pattern), String::from(filename)]
-    }
-
     fn prepare_config(pattern: &str, filename: &str) -> Config {
-        let args = prepare_args(pattern, filename);
-        let config = Config::new(&args).unwrap_or_else(|err| {
+        let args = TestArgs::new(pattern, filename);
+        let config = Config::new(args).unwrap_or_else(|err| {
             panic!("could not construct Config: {}", err);
         });
 
